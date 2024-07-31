@@ -1207,12 +1207,17 @@ class DPOTrainer(Trainer):
                         _,
                     ) = self.concatenated_forward(self.ref_model, batch)
 
+        # losses : dpo loss per example
         losses, chosen_rewards, rejected_rewards = self.dpo_loss(
             policy_chosen_logps,
             policy_rejected_logps,
             reference_chosen_logps,
             reference_rejected_logps,
         )
+        
+        if 'weight' in batch:
+            losses = losses * batch['weight']
+            
         reward_accuracies = (chosen_rewards > rejected_rewards).float()
 
         prefix = "eval_" if train_eval == "eval" else ""
