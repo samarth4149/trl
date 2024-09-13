@@ -485,6 +485,7 @@ class DPOTrainer(Trainer):
             )
             args.dataset_num_proc = dataset_num_proc
         self.dataset_num_proc = args.dataset_num_proc
+        self.avg_logprob = args.avg_logprob
 
         # NOTE : tokenize_row is not needed since it is done in the collator already
         # Compute that only on the main process for faster data processing.
@@ -1146,7 +1147,6 @@ class DPOTrainer(Trainer):
         
         _, _, _, _, _, new_all_labels = self.model.prepare_inputs_labels_for_multimodal(
                 input_ids = concatenated_batch["concatenated_input_ids"],
-                position_ids = None,
                 attention_mask = concatenated_batch["concatenated_attention_mask"],
                 past_key_values = None,
                 labels = concatenated_batch["concatenated_labels"],
@@ -1156,7 +1156,7 @@ class DPOTrainer(Trainer):
         all_logps = self.get_batch_logps(
             all_logits,
             new_all_labels,
-            average_log_prob=self.loss_type == "ipo",
+            average_log_prob=(self.avg_logprob or self.loss_type == "ipo"),
             is_encoder_decoder=self.is_encoder_decoder,
             label_pad_token_id=self.label_pad_token_id,
         )
