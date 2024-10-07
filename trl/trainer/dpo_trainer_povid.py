@@ -924,7 +924,7 @@ class DPOTrainer(Trainer):
             A dictionary containing the concatenated inputs under the key 'concatenated_input_ids'.
         """
         concatenated_batch = {}
-
+        
         if is_encoder_decoder:
             max_length = max(batch["chosen_labels"].shape[1], batch["rejected_labels"].shape[1])
         else:
@@ -975,6 +975,7 @@ class DPOTrainer(Trainer):
         policy_rejected_logps: torch.FloatTensor,
         reference_chosen_logps: torch.FloatTensor,
         reference_rejected_logps: torch.FloatTensor,
+        rejected_wt: torch.FloatTensor = None,
     ) -> Tuple[torch.FloatTensor, torch.FloatTensor, torch.FloatTensor]:
         """Compute the DPO loss for a batch of policy and reference model log probabilities.
 
@@ -989,11 +990,14 @@ class DPOTrainer(Trainer):
             The losses tensor contains the DPO loss for each example in the batch.
             The chosen_rewards and rejected_rewards tensors contain the rewards for the chosen and rejected responses, respectively.
         """
-        pi_logratios = policy_chosen_logps - policy_rejected_logps
+        if rejected_wt is None:
+            rejected_wt = torch.ones_like(policy_rejected_logps, dtype=policy_rejected_logps.dtype, device=policy_rejected_logps.device)
+            
+        pi_logratios = policy_chosen_logps - rejected_wt * policy_rejected_logps
         if self.reference_free:
             ref_logratios = torch.tensor([0], dtype=pi_logratios.dtype, device=pi_logratios.device)
         else:
-            ref_logratios = reference_chosen_logps - reference_rejected_logps
+            ref_logratios = reference_chosen_logps - rejected_wt * reference_rejected_logps
 
         pi_logratios = pi_logratios.to(self.accelerator.device)
         ref_logratios = ref_logratios.to(self.accelerator.device)
@@ -1120,6 +1124,7 @@ class DPOTrainer(Trainer):
 
         We do this to avoid doing two forward passes, because it's faster for FSDP.
         """
+        
         concatenated_batch = self.concatenated_inputs(
             batch,
             is_encoder_decoder=self.is_encoder_decoder,
@@ -1145,12 +1150,18 @@ class DPOTrainer(Trainer):
             **model_kwargs,
         ).logits
         
+        if self.is_encoder_decoder:
+            additional_prep_kwargs = {'decoder_attention_mask': None}
+        else:
+            additional_prep_kwargs = {'position_ids': None}
+            
         _, _, _, _, _, new_all_labels = self.model.prepare_inputs_labels_for_multimodal(
                 input_ids = concatenated_batch["concatenated_input_ids"],
                 attention_mask = concatenated_batch["concatenated_attention_mask"],
                 past_key_values = None,
                 labels = concatenated_batch["concatenated_labels"],
-                images = concatenated_batch["concatenated_images"]
+                images = concatenated_batch["concatenated_images"],
+                **additional_prep_kwargs
             )
 
         all_logps = self.get_batch_logps(
@@ -1213,6 +1224,7 @@ class DPOTrainer(Trainer):
             policy_rejected_logps,
             reference_chosen_logps,
             reference_rejected_logps,
+            rejected_wt=batch.get('wt_rejected', None)
         )
         
         if 'weight' in batch:

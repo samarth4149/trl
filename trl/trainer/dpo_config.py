@@ -74,7 +74,7 @@ class DPOConfig(TrainingArguments):
     padding_value: int = 0
     truncation_mode: str = "keep_end"
     max_length: Optional[int] = None
-    max_prompt_length: Optional[int] = None
+    max_prompt_length: Optional[int] = None # NOTE : this does not get used since we have our own collator
     max_target_length: Optional[int] = None
     is_encoder_decoder: Optional[bool] = None
     disable_dropout: bool = True
