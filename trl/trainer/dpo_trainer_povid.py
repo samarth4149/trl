@@ -1249,6 +1249,7 @@ class DPOTrainer(Trainer):
         model: Union[PreTrainedModel, nn.Module],
         inputs: Dict[str, Union[torch.Tensor, Any]],
         return_outputs=False,
+        num_items_in_batch=None, # currently unused
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, Dict[str, torch.Tensor]]]:
         if not self.use_dpo_data_collator:
             warnings.warn(
@@ -1269,52 +1270,70 @@ class DPOTrainer(Trainer):
         if return_outputs:
             return (loss, metrics)
         return loss
+    
+    def get_batch_samples(self, epoch_iterator, num_batches):
+        batch_samples = []
+        num_items_in_batch = None
+        for _ in range(num_batches):
+            try:
+                batch_samples += [next(epoch_iterator)]
+            except StopIteration:
+                break
+        if len(batch_samples) > 0 and "labels" in batch_samples[0]:
+            # For now we don't support object detection
+            try:
+                num_items_in_batch = sum(
+                    [data_batch["labels"][..., 1:].ne(-100).sum().item() for data_batch in batch_samples]
+                )
+            except TypeError:
+                pass
+        return batch_samples, num_items_in_batch
 
-    def get_batch_samples(self, model, batch: Dict[str, torch.LongTensor]) -> Tuple[str, str]:
-        """Generate samples from the model and reference model for the given batch of inputs."""
+    # def get_batch_samples(self, model, batch: Dict[str, torch.LongTensor]) -> Tuple[str, str]:
+    #     """Generate samples from the model and reference model for the given batch of inputs."""
 
-        # If one uses `generate_during_eval` with peft + bf16, we need to explicitly call generate with
-        # the torch cuda amp context manager as some hidden states are silently casted to full precision.
-        generate_context_manager = nullcontext if not self._peft_has_been_casted_to_bf16 else torch.cuda.amp.autocast
+    #     # If one uses `generate_during_eval` with peft + bf16, we need to explicitly call generate with
+    #     # the torch cuda amp context manager as some hidden states are silently casted to full precision.
+    #     generate_context_manager = nullcontext if not self._peft_has_been_casted_to_bf16 else torch.cuda.amp.autocast
 
-        with generate_context_manager():
-            policy_output = model.generate(
-                input_ids=batch["prompt_input_ids"],
-                attention_mask=batch["prompt_attention_mask"],
-                max_length=self.max_length,
-                do_sample=True,
-                pad_token_id=self.tokenizer.pad_token_id,
-            )
+    #     with generate_context_manager():
+    #         policy_output = model.generate(
+    #             input_ids=batch["prompt_input_ids"],
+    #             attention_mask=batch["prompt_attention_mask"],
+    #             max_length=self.max_length,
+    #             do_sample=True,
+    #             pad_token_id=self.tokenizer.pad_token_id,
+    #         )
 
-            # if reference_output in batch use that otherwise use the reference model
-            if "reference_output" in batch:
-                reference_output = batch["reference_output"]
-            else:
-                if self.ref_model is None:
-                    with self.null_ref_context():
-                        reference_output = self.model.generate(
-                            input_ids=batch["prompt_input_ids"],
-                            attention_mask=batch["prompt_attention_mask"],
-                            max_length=self.max_length,
-                            do_sample=True,
-                            pad_token_id=self.tokenizer.pad_token_id,
-                        )
-                else:
-                    reference_output = self.ref_model.generate(
-                        input_ids=batch["prompt_input_ids"],
-                        attention_mask=batch["prompt_attention_mask"],
-                        max_length=self.max_length,
-                        do_sample=True,
-                        pad_token_id=self.tokenizer.pad_token_id,
-                    )
+    #         # if reference_output in batch use that otherwise use the reference model
+    #         if "reference_output" in batch:
+    #             reference_output = batch["reference_output"]
+    #         else:
+    #             if self.ref_model is None:
+    #                 with self.null_ref_context():
+    #                     reference_output = self.model.generate(
+    #                         input_ids=batch["prompt_input_ids"],
+    #                         attention_mask=batch["prompt_attention_mask"],
+    #                         max_length=self.max_length,
+    #                         do_sample=True,
+    #                         pad_token_id=self.tokenizer.pad_token_id,
+    #                     )
+    #             else:
+    #                 reference_output = self.ref_model.generate(
+    #                     input_ids=batch["prompt_input_ids"],
+    #                     attention_mask=batch["prompt_attention_mask"],
+    #                     max_length=self.max_length,
+    #                     do_sample=True,
+    #                     pad_token_id=self.tokenizer.pad_token_id,
+    #                 )
 
-        policy_output = pad_to_length(policy_output, self.max_length, self.tokenizer.pad_token_id)
-        policy_output_decoded = self.tokenizer.batch_decode(policy_output, skip_special_tokens=True)
+    #     policy_output = pad_to_length(policy_output, self.max_length, self.tokenizer.pad_token_id)
+    #     policy_output_decoded = self.tokenizer.batch_decode(policy_output, skip_special_tokens=True)
 
-        reference_output = pad_to_length(reference_output, self.max_length, self.tokenizer.pad_token_id)
-        reference_output_decoded = self.tokenizer.batch_decode(reference_output, skip_special_tokens=True)
+    #     reference_output = pad_to_length(reference_output, self.max_length, self.tokenizer.pad_token_id)
+    #     reference_output_decoded = self.tokenizer.batch_decode(reference_output, skip_special_tokens=True)
 
-        return policy_output_decoded, reference_output_decoded
+    #     return policy_output_decoded, reference_output_decoded
 
     def prediction_step(
         self,
